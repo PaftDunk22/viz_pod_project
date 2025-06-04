@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OSU! World Map</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/topojson@3"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+
+<header>osu! World Map</header>
+
+<div class="content">
+  <svg></svg>
+  <div class="plasma-legend">
+  <div class="legend-title">Active Users</div>
+  <canvas id="plasmaCanvas" width="200" height="15"></canvas>
+  <div class="legend-labels">
+    <span>Low</span>
+    <span>High</span>
+  </div>
+</div>
+
+  <div class="sidebar">
+  <img src="osu_logo.png" alt="osu! logo">
+  <div id="country-info" style="margin-top: 20px; font-size: 16px; text-align: center;"></div>
+  <div id="bar-chart" style="width: 100%; height: 300px; margin-top: 20px;"></div>
+</div>
+
+<div class="tooltip"></div>
+
+<script>
+  const width = window.innerWidth * 0.8;
+  const height = window.innerHeight - document.querySelector('header').offsetHeight;
+
+  const svg = d3.select("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+  const g = svg.append("g");
+
+  const projection = d3.geoNaturalEarth1()
+    .scale(width / 1.3 / Math.PI)
+    .translate([width / 2, height / 2]);
+
+  const path = d3.geoPath(projection);
+  const tooltip = d3.select(".tooltip");
+
+  const zoom = d3.zoom()
+    .scaleExtent([1, 8])
+    .on("zoom", (event) => {
+      g.attr("transform", event.transform);
+    });
+
+  svg.call(zoom);
+
+let countryById = {};
+
+function parseActiveUsers(str) {
+  if (!str) return 0;
+  return +str.replace(/,/g, '');
+}
+
+Promise.all([
+  d3.csv("osu_country_rankings.csv"),
+  d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json"),
+  d3.json("country_ids.json")
+]).then(([csvData, worldData, countryMap]) => {
+  countryById = countryMap;
+
+  const countryData = {};
+  csvData.forEach((d, i) => {
+    countryData[d.Country.trim()] = {
+      rank: i + 1,
+      activeUsers: parseActiveUsers(d["Active Users"]),
+      totalScore: d["Total Score"],
+      rankedScore: d["Ranked Score"],
+      totalPlayCount: d["Total Play Count"],
+      performance: d["Performance"]
+    };
+  });
+  
+
+  const minUsers = 1;
+  const userValues = Object.values(countryData)
+    .map(d => d.activeUsers)
+    .filter(d => d > 0);
+  const maxUsers = d3.max(userValues);
+
+
+  const colorScale = d3.scaleSequentialLog()
+    .domain([minUsers, maxUsers])
+    .interpolator(d3.interpolatePlasma); 
+
+  d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json").then(worldData => {
+    
+    const countries = topojson.feature(worldData, worldData.objects.countries).features;
+
+    
+g.selectAll("path")
+  .data(countries)
+  .join("path")
+  .attr("class", "country")
+  .attr("d", path)
+  .attr("fill", d => {
+    const countryInfo = countryById[+d.id];
+    if (!countryInfo) return "#ccc";
+    const users = countryData[countryInfo.name]?.activeUsers;
+    if (!users || users < 1) return "#ccc";
+    return colorScale(users);
+  })
+  .attr("stroke", "#999")
+  .attr("stroke-width", 0.5)
+  .on("mouseover", (event, d) => {
+    const countryInfo = countryById[+d.id];
+    const countryName = countryInfo ? countryInfo.name : "Unknown";
+    const data = countryData[countryName];
+    const users = data?.activeUsers ?? "No data";
+
+    d3.select(event.currentTarget)
+      .attr("stroke", "limegreen")
+      .attr("stroke-width", 2);
+
+    tooltip.style("opacity", 1)
+      .html(`<strong>${countryName}</strong><br/>Active Users: ${typeof users === "number" ? users.toLocaleString() : users}`)
+      .style("left", (event.pageX + 10) + "px")
+      .style("top", (event.pageY - 28) + "px");
+  })
+  .on("mouseout", (event, d) => {
+    d3.select(event.currentTarget)
+      .attr("stroke", "#999")
+      .attr("stroke-width", 0.5);
+
+    tooltip.style("opacity", 0);
+  })
+  .on("click", (event, d) => {
+  event.stopPropagation();
+
+  const countryInfo = countryById[+d.id];
+  if (!countryInfo) return;
+  const countryName = countryInfo.name;
+  const alpha2 = countryInfo.alpha2.toLowerCase();
+  const data = countryData[countryName];
+
+  const [[x0, y0], [x1, y1]] = path.bounds(d);
+  svg.transition().duration(750).call(
+    zoom.transform,
+    d3.zoomIdentity
+      .translate(width / 2, height / 2)
+      .scale(Math.min(8, 0.9 / Math.max((x1 - x0) / width, (y1 - y0) / height)))
+      .translate(-(x0 + x1) / 2, -(y0 + y1) / 2)
+  );
+
+  const flagUrl = `https://flagcdn.com/w80/${alpha2}.png`;
+
+  if (data) {
+    d3.select("#country-info").html(`
+      <img src="${flagUrl}" alt="${countryName} flag" style="width:80px; height:auto; display:block; margin: 0 auto 10px auto; border:1px solid #ccc; border-radius:4px;">
+      <strong>${countryName}</strong><br/>
+      Rank by active users: ${data.rank}<br/>
+      Active Users: ${data.activeUsers.toLocaleString()}<br/>
+      Total Score: ${data.totalScore}<br/>
+      Ranked Score: ${data.rankedScore}<br/>
+      Total Play Count: ${data.totalPlayCount}<br/>
+      Performance: ${data.performance}`);
+  } else {
+    d3.select("#country-info").html(`
+      <img src="${flagUrl}" alt="${countryName} flag" style="width:80px; height:auto; display:block; margin: 0 auto 10px auto; border:1px solid #ccc; border-radius:4px;">
+      <strong>${countryName}</strong><br/>No data available`);
+    return;
+  }
+
+  const centerIndex = data.rank - 1;
+  const start = Math.max(centerIndex - 2, 0);
+  const end = start + 5;
+  const neighbors = csvData.slice(start, end);
+
+  const chartWidth = 360;
+  const chartHeight = 250;
+  const margin = { top: 20, right: 20, bottom: 60, left: 60 };
+
+  const chartSvg = d3.select("#country-info")
+    .append("div")
+    .attr("id", "bar-chart")
+    .append("svg")
+    .attr("width", chartWidth + margin.left + margin.right)
+    .attr("height", chartHeight + margin.top + margin.bottom)
+    .append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    chartSvg.append("text")
+  .attr("x", chartWidth / 2)
+  .attr("y", -5) 
+  .attr("text-anchor", "middle")
+  .style("font-size", "16px")
+  .style("font-weight", "bold")
+  .text("Active Users");
+
+
+  const x = d3.scaleBand()
+    .domain(neighbors.map(d => d.Country))
+    .range([0, chartWidth])
+    .padding(0.2);
+
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(neighbors, d => parseActiveUsers(d["Active Users"]))])
+    .nice()
+    .range([chartHeight, 0]);
+
+  chartSvg.append("g")
+    .attr("transform", `translate(0,${chartHeight})`)
+    .call(d3.axisBottom(x))
+    .selectAll("text")
+    .attr("transform", "rotate(-10)")
+    .style("text-anchor", "middle")
+    .attr("dy", "1.5em");
+
+  chartSvg.append("g")
+    .call(d3.axisLeft(y));
+
+  chartSvg.selectAll(".bar")
+  .data(neighbors)
+  .join("rect")
+  .attr("class", "bar")
+  .attr("x", d => x(d.Country))
+  .attr("width", x.bandwidth())
+  .attr("y", chartHeight)
+  .attr("height", 0)     
+  .attr("fill", d => d.Country.trim() === countryName ? "#ff4d4d" : "#69b3a2")
+  .transition()
+  .duration(800)
+  .attr("y", d => y(parseActiveUsers(d["Active Users"])))
+  .attr("height", d => chartHeight - y(parseActiveUsers(d["Active Users"])));
+});
+
+    svg.on("click", () => {
+      svg.transition().duration(750).call(
+        zoom.transform,
+        d3.zoomIdentity
+      );
+      d3.select("#country-info").html("");
+    });
+  });
+});
+
+function drawPlasmaLegend() {
+  const canvas = document.getElementById("plasmaCanvas");
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+
+  const gradient = ctx.createLinearGradient(0, 0, width, 0);
+  for (let i = 0; i <= 100; i++) {
+    const t = i / 100;
+    gradient.addColorStop(t, d3.interpolatePlasma(t));
+  }
+
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+}
+
+drawPlasmaLegend();
+
+</script>
+</body>
+</html>

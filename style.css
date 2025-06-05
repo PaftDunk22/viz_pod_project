@@ -65,7 +65,7 @@ body {
     padding: 8px 10px;
     border-radius: 6px;
     color: white;
-    font-size: 12px;
+    font-size: 14px;
     font-family: sans-serif;
     }
 
@@ -96,3 +96,15 @@ body {
   #bar-chart{
     margin-top: 15px;
   }
+
+.filter-active-users {
+  margin-top: 10px;
+  text-align: center;
+  font-weight: bold;
+  font-size: 14px;
+  color: #fff;
+}
+.filter-active-users label {
+  display: block;
+}
+

@@ -1,2 +1,2 @@
 Information about OSU! players per country with a interactable map.
-RUN WITH: https://paftdunk22.github.io/viz_pod_project/
+Run with link: https://paftdunk22.github.io/viz_pod_project/
